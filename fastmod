@@ -94,6 +94,7 @@ if not sys.argv[1:]:
     print("                                          and set group ownership to 'users'")
     print("  fastmod . a+x -G                        to give everyone execute permissions and not change group ownership")
     sys.exit(1)
+
 path = sys.argv[1]
 if not os.path.exists(path):
     print(f"fastmod: path '{path}' does not exist")
@@ -129,7 +130,7 @@ for arg in sys.argv[2:]:
         perms_fil = "u+rw,go-rwx"
     elif arg == "--readonly":
         perms_dir = "a=rx,g+xs-w,o-w,+t"
-        perms_fil = "a-w"
+        perms_fil = "a-w,+t"
     else:
         perms_dir = arg
         perms_fil = arg
