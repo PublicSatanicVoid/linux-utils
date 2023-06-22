@@ -1,0 +1,168 @@
+#!/usr/local/bin/python3.11 -S
+
+import getpass
+import grp
+import os
+import multiprocessing as mp
+import pwd
+import sys
+import time
+
+DEFAULT_BLOCKSIZE = 128
+
+primary_group = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
+
+# MOCKUP FOR TESTING
+# real_system = os.system
+# def mock_system(cmd):
+#     print(os.getpid(), cmd)
+#     ret = real_system(cmd)
+#     if ret != 0:
+#         print(f"ERROR :: {cmd} failed with exit code {ret}")
+# os.system = mock_system
+
+
+def worker(queue, group, quiet):
+    # print("worker", os.getpid(), group)
+    buffer = {}
+    total = 0
+    if quiet:
+        chmod = f"chmod -f"
+        chgrp = f"chgrp -f {group}"
+    else:
+        chmod = "chmod"
+        chgrp = f"chgrp {group}"
+    while True:
+        root, name, perms = queue.get()
+        total += 1
+        if name == ".":
+            path = root
+        else:
+            path = f"{root}/{name}"
+        
+        if root is None:
+            break
+        
+        buffer.setdefault(perms, set()).add(path)
+        
+        buffered = buffer[perms]
+        if len(buffered) >= blocksize:
+            joined_paths = ' '.join([f"'{b}'" for b in buffered])
+            if group is not None:
+                os.system(f"{chgrp} " + joined_paths)
+            os.system(f"{chmod} {perms} " + joined_paths)
+            buffer[perms].clear()
+    for perms, buffered in buffer.items():
+        if not buffered:
+            continue
+        joined_paths = ' '.join([f"'{b}'" for b in buffered])
+        if group is not None:
+            os.system(f"{chgrp} " + joined_paths)
+        os.system(f"{chmod} {perms} " + joined_paths)
+    return total
+
+
+if not sys.argv[1:]:
+    print("fastmod: Multithreaded utility for recursively changing permissions.")
+    print()
+    print("Usage:")
+    print(f"  fastmod PATH [FLAGS|--baseline|--group-allowed|--private|--readonly=baseline] [-G<group>=<primary group>|-G]")
+    print("               [-q] [-C<cores>] [-B<blocksize>]")
+    print()
+    print("Arguments:")
+    print("  PATH is the path to change permissions of. If a directory, permissions are recursively changed.")
+    print("  FLAGS is a chmod-style permission string, eg u+rx,g=rs,o+r-w,+t")
+    print("  FLAGS can also be *one* of the presets below instead:")
+    print("    --baseline         User gets read/write, all others get read-only")
+    print("    --group-allowed    User and group get read/write, others get read-only")
+    print("    --private          User gets read/write, others get no permissions")
+    print("    --readonly         All users get read-only; sticky bit added")
+    print("    All presets set the group sticky bit (g+s), so group ownership is automatically inherited.")
+    print("  Specify -G<group> to set group ownership, e.g. -Gusers.")
+    print("  Specify -G to keep group ownership as it is.")
+    print(f"  Omit -G to set group ownership to the user's primary group. ({primary_group})")
+    print("  Specify -q to suppress most error messages.")
+    print(f"  Specify -C<cores> to set the number of cores to use. Else, defaults to number available. ({os.cpu_count()})")
+    print(f"  Specify -B<blocksize> to set the number of files changed per batch. Else, defaults to {DEFAULT_BLOCKSIZE}.")
+    print()
+    print("Examples:")
+    print("  fastmod .                               to set cwd to baseline perms (user read/write, group/others read-only)")
+    print("                                          and set group ownership to your primary group")
+    print("  fastmod . --readonly                    to set to all read-only perms and set group ownership to your primary")
+    print("                                          group")
+    print("  fastmod . --group-allowed -Gusers       to set cwd to user/group read/write, others read-only")
+    print("                                          and set group ownership to 'users'")
+    print("  fastmod . a+x -G                        to give everyone execute permissions and not change group ownership")
+    sys.exit(1)
+path = sys.argv[1]
+if not os.path.exists(path):
+    print(f"fastmod: path '{path}' does not exist")
+    sys.exit(1)
+
+perms_dir = "u+rwx,g+rxs-w,o+rx-w"
+perms_fil = "u+rw,g+r-w,o+r-w"
+group = primary_group
+set_group = True
+ncpus = os.cpu_count()
+blocksize = DEFAULT_BLOCKSIZE
+quiet = False
+for arg in sys.argv[2:]:
+    if arg.startswith("-G"):
+        if arg == "-G":
+            set_group = False
+        else:
+            group = arg[2:]
+    elif arg.startswith("-C"):
+        ncpus = int(arg[2:])
+    elif arg.startswith("-B"):
+        blocksize = int(arg[2:])
+    elif arg == "-q":
+        quiet = True
+    elif arg == "--baseline":
+        perms_dir = "u+rwx,g+rxs-w,o+rx-w"
+        perms_fil = "u+rw,g+r-w,o+r-w"
+    elif arg == "--group-allowed":
+        perms_dir = "ug+rwx,g+s,o+rx-w"
+        perms_fil = "ug+rw,o+r-w"
+    elif arg == "--private":
+        perms_dir="u+rwx,g-rwx+s,o-rwx"
+        perms_fil = "u+rw,go-rwx"
+    elif arg == "--readonly":
+        perms_dir = "a=rx,g+xs-w,o-w,+t"
+        perms_fil = "a-w"
+    else:
+        perms_dir = arg
+        perms_fil = arg
+
+print(f"Setting directory permissions: {perms_dir}")
+print(f"Setting file permissions:      {perms_fil}")
+if set_group:
+    print(f"Setting group ownership:       {group}")
+
+if os.path.isdir(path):
+    print(f"Using {ncpus} workers, block size {blocksize}")
+    group_or_none = group if set_group else None
+    queue = mp.Queue()
+    workers = [mp.Process(target=worker, args=(queue, group_or_none, quiet)) for _ in range(ncpus)]
+    start = time.time()
+    [worker.start() for worker in workers]
+    dirs = set()
+    fils = set()
+    dot = "."
+    total = 0
+    for root, folders, files in os.walk(path):
+        queue.put_nowait((root, dot, perms_dir))
+        for file in files:
+            queue.put_nowait((root, file, perms_fil))
+            total += 1
+
+    [queue.put((None, None, None)) for _ in workers]
+    [worker.join() for worker in workers]
+
+    duration = time.time() - start
+    print(f"Set permissions on {total} files in {duration:.03f} seconds ({duration/total:.05f} s/file; {total/duration:.01f} files/s)")
+else:
+    os.system(f"chmod {perms_fil} '{path}'")
+    if set_group:
+        os.system(f"chgrp {group} '{path}'")
+    print("Done")
