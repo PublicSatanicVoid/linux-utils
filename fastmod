@@ -33,7 +33,7 @@ PRESETS = {
     },
     "readonly": {
         "fil": "a-w,+t",
-        "dir": "a=rx,g+xs-w,o-w,+t",
+        "dir": "a=rx,g+xs-w,o-w,+t"
     }
 }
 
