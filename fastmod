@@ -15,7 +15,7 @@ import time
 
 __copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
 __license__ = "Public Domain"
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 
 # How many files to change per chmod/chgrp command.
 DEFAULT_BLOCKSIZE = os.environ.get("FASTMOD_BLOCKSIZE", 128)
