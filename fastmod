@@ -3,6 +3,10 @@
 fastmod: Multithreaded utility for recursively changing permissions.
 
 Runs as a standalone script.
+
+This was developed and tested on Broadcom owned hardware. Accordingly, the
+copyright belongs to Broadcom. However, this script is NOT "endorsed" by
+Broadcom, and neither Broadcom nor I make any guarantees about this script.
 """
 
 __copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
@@ -54,7 +58,6 @@ PRESETS = {
 
 PRIMARY_GROUP = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
 
-
 # MOCKUP FOR TESTING
 # real_system = os.system
 # def mock_system(cmd):
@@ -79,12 +82,12 @@ def worker(queue, group, quiet):
             path = root
         else:
             path = f"{root}/{name}"
-        
+
         if root is None:
             break
-        
+
         buffer.setdefault(perms, set()).add(path)
-        
+
         buffered = buffer[perms]
         if len(buffered) >= blocksize:
             joined_paths = ' '.join([f"'{b}'" for b in buffered])
@@ -118,12 +121,10 @@ if not sys.argv[1:]:
     print("    file-perms:folder-perms     e.g. u+xs,g+x,o-w:g+s,o-w")
     print("  PRESET can be *one* of the presets below:")
     max_width = max(len(preset_name) for preset_name in PRESETS)
-    fil_perms_width = max(len("File Permissions"), max(len(perms["fil"])
-                                                       for perms
-                                                       in PRESETS.values()))
-    dir_perms_width = max(len("Folder Permissions"), max(len(perms["dir"])
-                                                         for perms
-                                                         in PRESETS.values()))
+    fil_perms_width = max(len("File Permissions"),
+                          max(len(perms["fil"]) for perms in PRESETS.values()))
+    dir_perms_width = max(len("Folder Permissions"),
+                          max(len(perms["dir"]) for perms in PRESETS.values()))
     print(f"    {'Preset Flag'.ljust(max_width+2)}    "
           f"{'File Permissions'.ljust(fil_perms_width)}    "
           f"{'Folder Permissions'.ljust(dir_perms_width)}")
@@ -220,8 +221,10 @@ if os.path.isdir(path):
         print(f"Using {ncpus} workers, block size {blocksize}")
     group_or_none = group if set_group else None
     queue = mp.Queue()
-    workers = [mp.Process(target=worker, args=(queue, group_or_none, quiet))
-               for _ in range(ncpus)]
+    workers = [
+        mp.Process(target=worker, args=(queue, group_or_none, quiet))
+        for _ in range(ncpus)
+    ]
     [worker.start() for worker in workers]
     dirs = set()
     fils = set()
