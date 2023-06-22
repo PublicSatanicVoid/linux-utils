@@ -1,4 +1,13 @@
 #!/usr/local/bin/python3.11 -S
+"""\
+fastmod: Multithreaded utility for recursively changing permissions.
+
+Runs as a standalone script.
+"""
+
+__copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
+__license__ = "Public Domain"
+__version__ = "1.1"
 
 import getpass
 import grp
@@ -8,7 +17,25 @@ import pwd
 import sys
 import time
 
-DEFAULT_BLOCKSIZE = 128
+DEFAULT_BLOCKSIZE = 128  # How many files to change per chmod/chgrp command.
+PRESETS = {
+    "baseline": {
+        "fil": "u+rw,g+r-w,o+r-w",
+        "dir": "u+rwx,g+rxs-w,o+rx-w"
+    },
+    "group-allowed": {
+        "fil": "ug+rw,o+r-w",
+        "dir": "ug+rwx,g+s,o+rx-w"
+    },
+    "private": {
+        "fil": "u+rw,go-rwx",
+        "dir": "u+rwx,g-rwx+s,o-rwx"
+    },
+    "readonly": {
+        "fil": "a-w,+t",
+        "dir": "a=rx,g+xs-w,o-w,+t",
+    }
+}
 
 primary_group = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
 
@@ -23,9 +50,7 @@ primary_group = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
 
 
 def worker(queue, group, quiet):
-    # print("worker", os.getpid(), group)
     buffer = {}
-    total = 0
     if quiet:
         chmod = f"chmod -f"
         chgrp = f"chgrp -f {group}"
@@ -34,7 +59,6 @@ def worker(queue, group, quiet):
         chgrp = f"chgrp {group}"
     while True:
         root, name, perms = queue.get()
-        total += 1
         if name == ".":
             path = root
         else:
@@ -59,40 +83,43 @@ def worker(queue, group, quiet):
         if group is not None:
             os.system(f"{chgrp} " + joined_paths)
         os.system(f"{chmod} {perms} " + joined_paths)
-    return total
 
 
 if not sys.argv[1:]:
     print("fastmod: Multithreaded utility for recursively changing permissions.")
+    print(__copyright__)
     print()
     print("Usage:")
-    print(f"  fastmod PATH [FLAGS|--baseline|--group-allowed|--private|--readonly=baseline] [-G<group>=<primary group>|-G]")
-    print("               [-q] [-C<cores>] [-B<blocksize>]")
+    print(f"  fastmod PATH [FLAGS|PRESET] [-G<group>=<primary group>|-G] [-q]")
+    print("               [-C<cores>] [-B<blocksize>]")
     print()
     print("Arguments:")
     print("  PATH is the path to change permissions of. If a directory, permissions are recursively changed.")
     print("  FLAGS is a chmod-style permission string, eg u+rx,g=rs,o+r-w,+t")
-    print("  FLAGS can also be *one* of the presets below instead:")
-    print("    --baseline         User gets read/write, all others get read-only")
-    print("    --group-allowed    User and group get read/write, others get read-only")
-    print("    --private          User gets read/write, others get no permissions")
-    print("    --readonly         All users get read-only; sticky bit added")
-    print("    All presets set the group sticky bit (g+s), so group ownership is automatically inherited.")
+    print("  You can specify separate flags for files and directories with:")
+    print("    file-perms:folder-perms     e.g. u+xs,g+x,o-w:g+s,o-w")
+    print("  PRESET can be *one* of the presets below:")
+    max_width = max(len(preset_name) for preset_name in PRESETS)
+    perms_width = max(2, max(len(perms["fil"])+1+len(perms["dir"]) for perms in PRESETS.values()))
+    print(f"    {'Preset Flag'.ljust(max_width+2)}    Permissions")
+    print(f"    {'-'*(max_width+2)}    {'-'*perms_width}")
+    for preset_name, perms in PRESETS.items():
+        print(f"    --{preset_name.ljust(max_width)}    {perms['fil']}|{perms['dir']}")
     print("  Specify -G<group> to set group ownership, e.g. -Gusers.")
-    print("  Specify -G to keep group ownership as it is.")
-    print(f"  Omit -G to set group ownership to the user's primary group. ({primary_group})")
-    print("  Specify -q to suppress most error messages.")
+    print(f"  Specify -G to set group ownership to the user's primary group. ({primary_group})")
+    print("     Omit -G to keep group ownership as it is.")
+    print("  Specify -q to suppress most messages.")
     print(f"  Specify -C<cores> to set the number of cores to use. Else, defaults to number available. ({os.cpu_count()})")
     print(f"  Specify -B<blocksize> to set the number of files changed per batch. Else, defaults to {DEFAULT_BLOCKSIZE}.")
     print()
     print("Examples:")
-    print("  fastmod .                               to set cwd to baseline perms (user read/write, group/others read-only)")
-    print("                                          and set group ownership to your primary group")
-    print("  fastmod . --readonly                    to set to all read-only perms and set group ownership to your primary")
-    print("                                          group")
-    print("  fastmod . --group-allowed -Gusers       to set cwd to user/group read/write, others read-only")
-    print("                                          and set group ownership to 'users'")
-    print("  fastmod . a+x -G                        to give everyone execute permissions and not change group ownership")
+    print("  fastmod .                            to set cwd to baseline perms (user read/write, group/others read-only)")
+    print("  fastmod . --readonly -G              to set to all read-only perms and set group ownership to your primary")
+    print("                                       group")
+    print("  fastmod . --group-allowed -Gusers    to set cwd to user/group read/write, others read-only")
+    print("                                       and set group ownership to 'users'")
+    print("  fastmod . a+x -G                     to give everyone execute permissions and set group ownership to your")
+    print("                                       primary group")
     sys.exit(1)
 
 path = sys.argv[1]
@@ -100,17 +127,18 @@ if not os.path.exists(path):
     print(f"fastmod: path '{path}' does not exist")
     sys.exit(1)
 
-perms_dir = "u+rwx,g+rxs-w,o+rx-w"
-perms_fil = "u+rw,g+r-w,o+r-w"
-group = primary_group
-set_group = True
+perms_fil = PRESETS["baseline"]["fil"]
+perms_dir = PRESETS["baseline"]["dir"]
+group = None
+set_group = False
 ncpus = os.cpu_count()
 blocksize = DEFAULT_BLOCKSIZE
 quiet = False
 for arg in sys.argv[2:]:
     if arg.startswith("-G"):
+        set_group = True
         if arg == "-G":
-            set_group = False
+            group = primary_group
         else:
             group = arg[2:]
     elif arg.startswith("-C"):
@@ -119,29 +147,33 @@ for arg in sys.argv[2:]:
         blocksize = int(arg[2:])
     elif arg == "-q":
         quiet = True
-    elif arg == "--baseline":
-        perms_dir = "u+rwx,g+rxs-w,o+rx-w"
-        perms_fil = "u+rw,g+r-w,o+r-w"
-    elif arg == "--group-allowed":
-        perms_dir = "ug+rwx,g+s,o+rx-w"
-        perms_fil = "ug+rw,o+r-w"
-    elif arg == "--private":
-        perms_dir="u+rwx,g-rwx+s,o-rwx"
-        perms_fil = "u+rw,go-rwx"
-    elif arg == "--readonly":
-        perms_dir = "a=rx,g+xs-w,o-w,+t"
-        perms_fil = "a-w,+t"
+    elif arg.startswith("--"):
+        preset_name = arg[2:]
+        if preset_name not in PRESETS:
+            print(f"fastmod: preset '{preset_name}' does not exist")
+            sys.exit(1)
+        perms_fil = PRESETS[preset_name]["fil"]
+        perms_dir = PRESETS[preset_name]["dir"]
+    elif ":" in arg:
+        try:
+            perms_fil, perms_dir = arg.split(":")
+        except ValueError:
+            print("fastmod: specify multiple permission flags like 'file-perms|folder-perms'")
+            print("e.g. 'u+xs,g+x,o-w:g+s,o-w'")
+            sys.exit(1)
     else:
-        perms_dir = arg
         perms_fil = arg
+        perms_dir = arg
 
-print(f"Setting directory permissions: {perms_dir}")
-print(f"Setting file permissions:      {perms_fil}")
-if set_group:
-    print(f"Setting group ownership:       {group}")
+if not quiet:
+    print(f"Setting file permissions:      {perms_fil}")
+    print(f"Setting directory permissions: {perms_dir}")
+    if set_group:
+        print(f"Setting group ownership:       {group}")
 
 if os.path.isdir(path):
-    print(f"Using {ncpus} workers, block size {blocksize}")
+    if not quiet:
+        print(f"Using {ncpus} workers, block size {blocksize}")
     group_or_none = group if set_group else None
     queue = mp.Queue()
     workers = [mp.Process(target=worker, args=(queue, group_or_none, quiet)) for _ in range(ncpus)]
@@ -153,6 +185,7 @@ if os.path.isdir(path):
     total = 0
     for root, folders, files in os.walk(path):
         queue.put_nowait((root, dot, perms_dir))
+        total += 1
         for file in files:
             queue.put_nowait((root, file, perms_fil))
             total += 1
