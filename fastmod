@@ -9,6 +9,9 @@ __copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
 __license__ = "Public Domain"
 __version__ = "1.1"
 
+if __name__ != "__main__":
+    raise ImportError("fastmod is run as a script, not included as a module.")
+
 import getpass
 import grp
 import os
@@ -17,7 +20,9 @@ import pwd
 import sys
 import time
 
-DEFAULT_BLOCKSIZE = 128  # How many files to change per chmod/chgrp command.
+DEFAULT_BLOCKSIZE = os.environ.get("FASTMOD_BLOCKSIZE", 128)  # How many files to change per chmod/chgrp command.
+DEFAULT_CORES = os.environ.get("FASTMOD_CORES", os.cpu_count() - 1)  # How many worker processes to create.
+DEFAULT_PRESET = os.environ.get("FASTMOD_PRESET", "baseline")  # Preset to use if no flag or preset is specified.
 PRESETS = {
     "baseline": {
         "fil": "u+rw,g+r-w,o+r-w",
@@ -37,7 +42,7 @@ PRESETS = {
     }
 }
 
-primary_group = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
+PRIMARY_GROUP = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
 
 # MOCKUP FOR TESTING
 # real_system = os.system
@@ -105,12 +110,17 @@ if not sys.argv[1:]:
     print(f"    {'-'*(max_width+2)}    {'-'*perms_width}")
     for preset_name, perms in PRESETS.items():
         print(f"    --{preset_name.ljust(max_width)}    {perms['fil']}|{perms['dir']}")
+    print(f"  By default, the preset is {DEFAULT_PRESET}.")
     print("  Specify -G<group> to set group ownership, e.g. -Gusers.")
-    print(f"  Specify -G to set group ownership to the user's primary group. ({primary_group})")
+    print(f"  Specify -G to set group ownership to the user's primary group. ({PRIMARY_GROUP})")
     print("     Omit -G to keep group ownership as it is.")
     print("  Specify -q to suppress most messages.")
-    print(f"  Specify -C<cores> to set the number of cores to use. Else, defaults to number available. ({os.cpu_count()})")
+    print(f"  Specify -C<cores> to set the number of worker processes to use. Else, defaults to number available minus 1. ({DEFAULT_CORES})")
     print(f"  Specify -B<blocksize> to set the number of files changed per batch. Else, defaults to {DEFAULT_BLOCKSIZE}.")
+    print()
+    print("Configuration:")
+    print("  You can override defaults with these environment variables:")
+    print("    FASTMOD_BLOCKSIZE, FASTMOD_CORES, FASTMOD_PRESET")
     print()
     print("Examples:")
     print("  fastmod .                            to set cwd to baseline perms (user read/write, group/others read-only)")
@@ -127,18 +137,18 @@ if not os.path.exists(path):
     print(f"fastmod: path '{path}' does not exist")
     sys.exit(1)
 
-perms_fil = PRESETS["baseline"]["fil"]
-perms_dir = PRESETS["baseline"]["dir"]
+perms_fil = PRESETS[DEFAULT_PRESET]["fil"]
+perms_dir = PRESETS[DEFAULT_PRESET]["dir"]
 group = None
 set_group = False
-ncpus = os.cpu_count()
+ncpus = DEFAULT_CORES
 blocksize = DEFAULT_BLOCKSIZE
 quiet = False
 for arg in sys.argv[2:]:
     if arg.startswith("-G"):
         set_group = True
         if arg == "-G":
-            group = primary_group
+            group = PRIMARY_GROUP
         else:
             group = arg[2:]
     elif arg.startswith("-C"):
@@ -177,12 +187,12 @@ if os.path.isdir(path):
     group_or_none = group if set_group else None
     queue = mp.Queue()
     workers = [mp.Process(target=worker, args=(queue, group_or_none, quiet)) for _ in range(ncpus)]
-    start = time.time()
     [worker.start() for worker in workers]
     dirs = set()
     fils = set()
     dot = "."
     total = 0
+    start = time.time()
     for root, folders, files in os.walk(path):
         queue.put_nowait((root, dot, perms_dir))
         total += 1
@@ -190,10 +200,10 @@ if os.path.isdir(path):
             queue.put_nowait((root, file, perms_fil))
             total += 1
 
-    [queue.put((None, None, None)) for _ in workers]
+    [queue.put_nowait((None, None, None)) for _ in range(ncpus)]
     [worker.join() for worker in workers]
-
     duration = time.time() - start
+
     print(f"Set permissions on {total} files in {duration:.03f} seconds ({duration/total:.05f} s/file; {total/duration:.01f} files/s)")
 else:
     os.system(f"chmod {perms_fil} '{path}'")
