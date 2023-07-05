@@ -18,15 +18,19 @@ __copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
 __license__ = "Public Domain"
 __version__ = "1.0.0"
 
-# TODO: Wrapper Bash script which can be source'd to set the cwd, and
-# if we are called from that script (and that script was indeed
-# source'd) we can avoid creating a subshell
-
 USER = getpass.getuser()
 JUMP_LIST = f"/home/{USER}/.jump"
 os.makedirs(JUMP_LIST, mode=0o755, exist_ok=True)
 
-SHELL = os.environ.get("SHELL", "/bin/bash")
+if "_JUMPTO" in os.environ:
+    # We are being sourced through the Bash wrapper - good!
+    IS_SOURCED = True
+    DEST_HOLDER = os.environ["_JUMPTO"]
+else:
+    # We are not being sourced, so we have to use subshells to change
+    # cwd
+    IS_SOURCED = False
+    SHELL = os.environ.get("SHELL", "/bin/bash")
 
 if not sys.argv[1:]:
     print(f"jumpto [-s|-e|-d|-v] [label]")
@@ -124,7 +128,10 @@ with open(f"{JUMP_LIST}/{label}", mode="r") as f:
         print(f"jumpto: multiple locations defined for label '{label}'")
         print("enter the number of the location to jump to: ")
         for i, path in enumerate(jumps, 1):
-            print(f"  {i}: {path}")
+            flag = ""
+            if not os.path.exists(path):
+                flag = "[no longer exists]"
+            print(f"  {i}: {path} {flag}")
         try:
             num = int(input())
         except KeyboardInterrupt:
@@ -135,5 +142,9 @@ with open(f"{JUMP_LIST}/{label}", mode="r") as f:
             sys.exit(1)
         jump_to = jumps[num - 1]
 
-    os.chdir(jump_to)
-    os.system(SHELL)
+    if IS_SOURCED:
+        with open(DEST_HOLDER, "w+") as f:
+            f.write(jump_to)
+    else:
+        os.chdir(jump_to)
+        os.system(SHELL)
