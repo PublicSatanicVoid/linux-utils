@@ -47,8 +47,9 @@ alias x="exit"
 alias rp="readlink -f"
 
 
+# Requires 'pbzip2' on PATH: https://github.com/ruanhuabin/pbzip2
 function tar_and_remove {
-    tar -cf $1.tar.bz2 -I/projects/libdev_py/bin/pbzip2 $1 --remove-files
+    tar -cf $1.tar.bz2 -Ipbzip2 $1 --remove-files
 }
 
 function replace_all {
