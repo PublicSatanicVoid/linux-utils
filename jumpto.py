@@ -20,6 +20,7 @@ __version__ = "1.0.0"
 
 USER = getpass.getuser()
 JUMP_LIST = f"/home/{USER}/.jump"
+os.umask(0o027)
 os.makedirs(JUMP_LIST, mode=0o755, exist_ok=True)
 
 if "_JUMPTO" in os.environ:
