@@ -5,8 +5,7 @@ if [ "${BASH_SOURCE[0]}" == "$0" ]; then
     exit 1
 else
     script_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
-    dest_holder="/tmp/jumpto_$USER.tmp"
-    rm -f "$dest_holder"
+    dest_holder="$(readlink -f ~)/.jumpto.tmp"
     _JUMPTO="$dest_holder" $script_dir/jumpto.py "$@"
     if [ -f "$dest_holder" ]; then
         dest="$(< "$dest_holder")"
