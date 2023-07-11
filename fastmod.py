@@ -17,7 +17,10 @@ import time
 
 __copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
 __license__ = "Public Domain"
-__version__ = "2.0.0"
+__version__ = "2.0.1"
+
+# Logs chmod/chgrp commands and checks their return status.
+DEBUG = False
 
 # How many files to change per chmod/chgrp command.
 DEFAULT_BLOCKSIZE = int(os.environ.get("FASTMOD_BLOCKSIZE", 128))
@@ -26,7 +29,7 @@ DEFAULT_BLOCKSIZE = int(os.environ.get("FASTMOD_BLOCKSIZE", 128))
 DEFAULT_CORES = int(os.environ.get("FASTMOD_CORES", os.cpu_count() - 1))
 
 # Preset to use if no flag or preset is specified.
-DEFAULT_PRESET = os.environ.get("FASTMOD_PRESET", "baseline")
+DEFAULT_PRESET = os.environ.get("FASTMOD_PRESET", "umask")
 
 
 def get_umask_str():
@@ -38,9 +41,6 @@ def get_umask_str():
                                  text=True)
     umask, _ = umask_cmd.communicate()
     return umask.strip()
-
-
-UMASK_STR = get_umask_str()
 
 
 def calculate_umask_modifier(umask_str):
@@ -92,7 +92,7 @@ def _test_calculate_umask_modifier():
 
 _test_calculate_umask_modifier()
 
-_umask_fil, _umask_dir = calculate_umask_modifier(UMASK_STR)
+_umask_fil, _umask_dir = calculate_umask_modifier(get_umask_str())
 
 PRESETS = {
     "baseline": {
@@ -123,14 +123,15 @@ PRESETS = {
 
 PRIMARY_GROUP = grp.getgrgid(pwd.getpwnam(getpass.getuser()).pw_gid).gr_name
 
-# MOCKUP FOR TESTING
-# real_system = os.system
-# def mock_system(cmd):
-#     print(os.getpid(), cmd)
-#     ret = real_system(cmd)
-#     if ret != 0:
-#         print(f"ERROR :: {cmd} failed with exit code {ret}")
-# os.system = mock_system
+if DEBUG:
+    # DEBUG WRAPPER FOR TESTING
+    _real_system = os.system
+    def wrapped_system(cmd):
+        print(os.getpid(), cmd)
+        ret = _real_system(cmd)
+        if ret != 0:
+            print(f"ERROR :: {cmd} failed with exit code {ret}")
+    os.system = wrapped_system
 
 
 def worker_main(queue, group, quiet, blocksize, nontrivial):
@@ -176,9 +177,9 @@ def print_usage():
     """Displays basic usage information."""
     print("Usage:")
     print("  fastmod --help")
-    print("  fastmod [OPTIONS] [PERMS] PATH[S ...]")
-    print("  fastmod [OPTIONS] [FILE_PERMS]:[FOLDER_PERMS] PATH[S ...]")
-    print("  fastmod [OPTIONS] [PRESET=\"--baseline\"] PATH[S ...]")
+    print("  fastmod [options] perms path[s ...]")
+    print("  fastmod [options] file_perms:folder_perms path[s ...]")
+    print(f"  fastmod [options] [preset=\"--{DEFAULT_PRESET}\"] path[s ...]")
     print("Available options: -G<group>, -C<cores>, -B<blocksize>, -q")
     print("Use 'fastmod --help' for more information.")
 
@@ -196,7 +197,7 @@ def print_full_help():
           "permissions are recursively changed.")
     print("    Specify multiple paths by separating them with spaces.")
     print("  PERMS is a chmod-style permission string, eg u+rx,g=rs,o+r-w,+t")
-    print("  You can specify separate perms for files and directories with:")
+    print("  You can  also specify separate perms for files and directories with:")
     print("    file-perms:folder-perms     e.g. u+xs,g+x,o-w:g+s,o-w")
     print("  PRESET can be *one* of the presets below:")
     max_width = max(len(preset_name) for preset_name in PRESETS)
@@ -236,20 +237,16 @@ def print_full_help():
     print("    FASTMOD_BLOCKSIZE, FASTMOD_CORES, FASTMOD_PRESET")
     print()
     print("Examples:")
-    print("  fastmod .                            to set cwd to baseline "
-          "perms (user read/write, group/others read-only)")
-    print("  fastmod --readonly -G .              to set to all read-only "
-          "perms and set group ownership to your primary")
+    print("  fastmod .                            to apply default preset to cwd")
+    print("  fastmod --readonly -G .              to set cwd to read-only perms and "
+          "set group ownership to your primary")
     print("                                       group")
     print("  fastmod --group-allowed -Gusers .    to set cwd to user/group "
           "read/write, others read-only")
-    print("                                       and set group ownership to "
-          "'users'")
+    print("                                       and set group ownership to 'users'")
     print("  fastmod a+x -G foo bar               to give everyone execute "
           "permissions to 'foo' and 'bar' and set group ")
-    print(
-        "                                       ownership to your primary group"
-    )
+    print("                                       ownership to your primary group")
 
 
 class Config:
@@ -294,27 +291,19 @@ def check_perm(s):
         sel = ""
         op = None
         for c in group:
-            if not op:
-                if c in operators:
-                    op = c
-                    if op == "=":
-                        nontrivial = True
-                    continue
+            if c in operators:
+                op = c
+                if op == "=":
+                    nontrivial = True
+            elif not op:
                 if c in selectors:
                     sel += c
                 else:
                     return False, False
+            elif c in permissions:
+                nontrivial = True
             else:
-                if c in operators:
-                    op = c
-                    if op == "=":
-                        nontrivial = True
-                    continue
-                else:
-                    if c in permissions:
-                        nontrivial = True
-                    else:
-                        return False, False
+                return False, False
         if not op:
             return False, False
 
@@ -348,6 +337,7 @@ def _test_check_perm():
     assert check_perm("f+oo") == (False, False)
     assert check_perm("f+oo,b-ar,+qux") == (False, False)
     assert check_perm("u+rwx,b-ar") == (False, False)
+    assert check_perm("u+rwx, g+rx-w") == (False, False)
 
 
 _test_check_perm()
@@ -357,6 +347,7 @@ def parse_args(argv):
     """Returns Config object of parsed arguments."""
     config = Config()
     reading_paths = False
+    have_preset = False
 
     for arg in argv[1:]:
         if arg.startswith("-G"):
@@ -382,23 +373,23 @@ def parse_args(argv):
                 return None
             config.perms_fil = PRESETS[preset_name]["fil"]
             config.perms_dir = PRESETS[preset_name]["dir"]
+            have_preset = True
             continue
         elif ":" in arg:
+            if have_preset:
+                print("fastmod: cannot specify both preset and permission flags")
+                return None
             try:
                 config.perms_fil, config.perms_dir = arg.split(":")
                 valid, nontrivial_fil = check_perm(config.perms_fil)
                 if not valid:
-                    print(
-                        f"fastmod: invalid permission string '{config.perms_fil}'"
-                    )
+                    print(f"fastmod: invalid permission string '{config.perms_fil}'")
                     return None
                 valid, nontrivial_dir = check_perm(config.perms_dir)
                 if not valid:
-                    print(
-                        f"fastmod: invalid permission string '{config.perms_dir}'"
-                    )
+                    print(f"fastmod: invalid permission string '{config.perms_dir}'")
                     return None
-                config.nontrivial = nontrivial_fil and nontrivial_dir
+                config.nontrivial = nontrivial_fil or nontrivial_dir
             except ValueError:
                 print("fastmod: specify multiple permission flags like"
                       " 'file-perms|folder-perms'")
@@ -419,6 +410,9 @@ def parse_args(argv):
                 while arg.startswith("%"):
                     arg = arg[1:]
                 valid, nontrivial = check_perm(arg)
+                if valid and have_preset:
+                    print("fastmod: cannot specify both preset and permission flags")
+                    return None
                 if valid:
                     config.perms_fil = arg
                     config.perms_dir = arg
@@ -426,9 +420,12 @@ def parse_args(argv):
                     reading_paths = True
                     continue
                 else:
-                    print(
-                        f"fastmod: first non-flag argument '{arg}' is neither"
-                        " a permission string nor a valid path")
+                    if have_preset:
+                        print(f"fastmod: no such path as '{arg}'")
+                    else:
+                        print(
+                            f"fastmod: first non-flag argument '{arg}' is neither a"
+                            " valid permission string nor a valid path")
                     return None
             if reading_paths:
                 if not os.path.exists(arg):
@@ -436,6 +433,10 @@ def parse_args(argv):
                     return None
                 config.paths.append(arg)
                 continue
+
+    if not config.paths:
+        print("fastmod: must specify at least one path")
+        return None
 
     return config
 
@@ -503,14 +504,16 @@ def print_config(config):
     """Prints the configured changes to be made."""
     if not config.nontrivial:
         if config.set_group:
-            print(
-                "fastmod: notice: you specified an effectively empty permission string. "
-                "Only group ownership will be changed.")
+            if not config.quiet:
+                print(
+                    "fastmod: notice: you specified an effectively empty permission "
+                    "string. Only group ownership will be changed.")
         else:
-            print(
-                "fastmod: notice: you specified an effectively empty permission string and "
-                "did not specify to change a group. There are no changes to perform."
-            )
+            if not config.quiet:
+                print(
+                    "fastmod: notice: you specified an effectively empty permission "
+                    "string and did not specify to change a group. There are no "
+                    "changes to perform.")
             return 0
     if not config.quiet:
         if config.nontrivial:
@@ -527,7 +530,7 @@ def print_config(config):
         changes = [
             chg for chg in [fil_changes, dir_changes, grp_changes] if chg
         ]
-        print(f"changes to make: {'  '.join(changes)}")
+        print(f"changes to make:  {'  '.join(changes)}")
 
 
 def fastmod(config):
@@ -549,12 +552,12 @@ def fastmod(config):
         if os.path.isfile(path):
             queue.put_nowait((dot, path, config.perms_fil))
         else:
-            queue.put_nowait((path, dot, config.perms_dir))
-        total += 1
-        for root, _, files in os.walk(path):
-            for file in files:
-                queue.put_nowait((root, file, config.perms_fil))
-                total += 1
+            total += 1
+            for root, _, files in os.walk(path):
+                queue.put_nowait((root, dot, config.perms_dir))
+                for file in files:
+                    queue.put_nowait((root, file, config.perms_fil))
+                    total += 1
 
     for _ in workers:
         queue.put_nowait((None, None, None))
