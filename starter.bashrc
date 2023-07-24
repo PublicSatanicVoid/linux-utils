@@ -92,34 +92,48 @@ function cdls {
 
 export PATH="/home/$USER/.local/bin:/home/$USER/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
 
-RED="\$(echo -e \e[31m)"
-GREEN="\$(echo -e \e[32m)"
-YELLOW="\$(echo -e \e[33m)"
-BLUE="\$(echo -e \e[94m)"
-CYAN="\$(echo -e \e[36m)"
-RESET="\$(echo -e \e[0m)"
-BLINK="\$(echo -e \e[5m)"
-BOLD="\$(echo -e \e[1m)"
+RED='\033[31m'
+GREEN='\033[32m'
+YELLOW='\033[33m'
+BLUE='\033[94m'
+CYAN='\033[36m'
+GREY='\033[38;5;244m'
+RESET='\033[0m'
+BLINK='\033[5m'
+BOLD='\033[1m'
+ORANGE='\033[38;5;208m'
+DARK_ORANGE='\033[38;5;202m'
+GOLD='\033[38;5;214m'
+PURPLE='\033[38;5;128m'
+
+SUNSET1='\033[38;5;161m'
+SUNSET2='\033[38;5;162m'
+SUNSET3='\033[38;5;163m'
+SUNSET4='\033[38;5;164m'
+SUNSET5='\033[38;5;165m'
+
+REDHLGHT='\033[41m\033[37m'
+
 
 function cwdtags {
     tags=""
 
     # Indicate when in a read-only directory
     if [ ! -w . ]; then
-        tags="$tags \e[31m[not writable]\e[0m"
+        tags="$tags \033[31m[not writable]\033[0m"
     fi
 
     # Indicate when in a different group's area
     owning_group="$(ls -la | head -n2 | tail -n1 | awk {'print$4'})"
     if [[ "$(groups)" != *"$owning_group"* ]]; then
-        tags="$tags \e[36m[external group: $owning_group]\e[0m"
+        tags="$tags \033[36m[external group: $owning_group]\033[0m"
     fi
 
     # Much more lightweight way to show git branch than that
     # obnoxiously slow git-prompt thing
     branch="$(git branch --show-current 2>/dev/null)"
     if [[ $? == 0 ]]; then
-        tags="$tags \e[94m[$branch]\e[0m"
+        tags="$tags \033[94m[$branch]\033[0m"
     fi
     
     echo -e "$tags"
@@ -127,12 +141,12 @@ function cwdtags {
 
 if [ "$PS1" ]; then
     whoami=`whoami`
-    color_whoami="$GREEN$whoami"
-    if [[ "$whoami" == "root" ]]; then
-        color_whoami="$RED$BOLD$whoami"
+    color_whoami=""
+    if [[ "$whoami" != "$PRIMARY_USER" ]]; then
+        color_whoami="$RED$BOLD$whoami$RESET@"
     fi
-    PROMPT_PREFIX="\n$color_whoami$RESET@$BLUE\$(hostname --fqdn)$RESET:$YELLOW\w$RESET\$(cwdtags)"
-    PROMPT_SUFFIX="$RESET\n$ "
+    PROMPT_PREFIX="\n$color_whoami$ORANGE\$(hostname) $GOLD\w$RESET\$(cwdtags)"
+    PROMPT_SUFFIX="$RESET\n% "
 
     PS1="$PROMPT_PREFIX$PROMPT_SUFFIX"
 fi
