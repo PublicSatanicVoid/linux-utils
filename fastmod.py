@@ -17,7 +17,7 @@ import time
 
 __copyright__ = "Copyright (c) 2023 Broadcom Corporation. All rights reserved."
 __license__ = "Public Domain"
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 # Logs chmod/chgrp commands and checks their return status.
 DEBUG = False
@@ -277,6 +277,8 @@ def check_perm(s):
         [0] Whether the string is a valid permission string;
         [1] Whether the permission string has any effect.
     """
+    while s.startswith("%"):
+        s = s[1:]
     try:
         n = int(s)
         valid = n >= 0 and n <= 0o7777
@@ -392,7 +394,7 @@ def parse_args(argv):
                 config.nontrivial = nontrivial_fil or nontrivial_dir
             except ValueError:
                 print("fastmod: specify multiple permission flags like"
-                      " 'file-perms|folder-perms'")
+                      " 'file-perms:folder-perms'")
                 print("e.g. 'u+xs,g+x,o-w:g+s,o-w'")
                 return None
             continue
@@ -551,10 +553,11 @@ def fastmod(config):
     for path in config.paths:
         if os.path.isfile(path):
             queue.put_nowait((dot, path, config.perms_fil))
-        else:
             total += 1
+        else:
             for root, _, files in os.walk(path):
                 queue.put_nowait((root, dot, config.perms_dir))
+                total += 1
                 for file in files:
                     queue.put_nowait((root, file, config.perms_fil))
                     total += 1
