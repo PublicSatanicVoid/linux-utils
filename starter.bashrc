@@ -39,12 +39,14 @@ alias vg=gvim
 alias h=history
 alias ll="ls -lah"
 alias dusha="du -sh --apparent-size"
+alias pstree="ps -e -o pid,user,state,rss,pcpu,etime,args --forest"
 alias 1="cd ../."
 alias 2="cd ../../."
 alias 3="cd ../../../."
 alias 4="cd ../../../../."
 alias x="exit"
 alias rp="readlink -f"
+alias portusage="lsof -i -P -n"
 
 
 # Requires 'pbzip2' on PATH: https://github.com/ruanhuabin/pbzip2
@@ -64,20 +66,53 @@ function vimwich {
     vim `which "$1"`
 }
 
+# The function that everyone should have in their bashrc.
+# Solves the common problem of:
+#   $ ls
+#   $ ls foo
+#   $ ls foo/bar
+#   $ ls foo/bar/baz
+#   $ vim foo/bar/baz/qux  # <--- have to jump to the beginning of the command and replace 'ls' with 'vim'
+# Instead, you can now do:
+#   $ xp
+#   $ xp foo
+#   $ xp foo/bar/baz
+#   $ xp foo/bar/baz/qux   # <--- when arg is a file, opens in $EDITOR
+#   $ xp foo/bar/baz/qux -xa rm %    # <--- 'xp <file|folder> -xa <command [args ...]>' 
+#                                         will run <command> with <args>, using '%' as a substitution
+#                                         for the file name. (-xa is for xargs)
+#   $ xp foo/bar/baz/exe -x 123 456  # <--- runs 'foo/bar/baz/exe' with args '123', '456'
+# The nice thing this adds is being able to change the behavior by appending, rather than prepending,
+# to the previous command.
 function explore {
     if [ -z "$1" ]; then
-        explore .
+        fn="${FUNCNAME[0]}"
+        echo "$fn: the file utility you always wanted, but never knew you needed"
+        echo "usage:"
+        echo "  $fn <folder>                         to list contents of folder"
+        echo "  $fn <file>                           to open file in your \$EDITOR"
+        echo "  $fn <folder> -cd                     to cd to folder"
+        echo "  $fn <file> -x  [args ...]            to execute <file>, optionally with args"
+        echo "  $fn <file> -xa <cmd> [args ...]      to run <cmd> on the given file, using '%' as a placeholder."
+        echo "  $fn <folder> -xaf  <cmd> [args ...]  to run <cmd> on all top-level files in <folder>, using '%' as a placeholder."
+        echo "  $fn <folder> -xarf <cmd> [args ...]  to run <cmd> on all contents of <folder>, recursively, using '%' as a placeholder."
         return
     fi
 
-    if [[ -d "$1" && "$2" == "cd" ]]; then
+    if [[ -d "$1" && "$2" == "-cd" ]]; then
         cd "$1"
+    elif [[ "$2" == "-xaf" ]]; then
+        find "$1" -maxdepth 1 -mindepth 1 -print0 | xargs -0 -I% "${@:3}"
+    elif [[ "$2" == "-xafr" ]]; then
+        find "$1" -mindepth 1 -print0 | xargs -0 -I% "${@:3}"
+    elif [[ "$2" == "-xa" ]]; then
+        echo "$1" | xargs -0 -I% "${@:3}"
     elif [ -d "$1" ]; then
         ll "$1"
-    elif [[ -x "$1" && "$2" == "x" ]]; then
+    elif [[ -x "$1" && "$2" == "-x" ]]; then
         $1 ${@:3}
     else
-        vim "$1"
+        "$EDITOR" "$1"
     fi
 }
 alias xp=explore
@@ -88,6 +123,11 @@ function mkcd {
 
 function cdls {
     cd "$1" && ls
+}
+
+function pyinit {
+    mkdir -p "$1"
+    touch "$1"/__init__.py
 }
 
 export PATH="/home/$USER/.local/bin:/home/$USER/bin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin"
@@ -139,14 +179,31 @@ function cwdtags {
     echo -e "$tags"
 }
 
+function update_tty_title {
+    echo -ne "\033]0;$(whoami)@$(hostname)\007"
+}
+
 if [ "$PS1" ]; then
     whoami=`whoami`
-    color_whoami=""
+    color_whoami="$YELLOW$whoami$RESET@"
     if [[ "$whoami" != "$PRIMARY_USER" ]]; then
-        color_whoami="$RED$BOLD$whoami$RESET@"
+        color_whoami="$RED$whoami$RESET@"
     fi
-    PROMPT_PREFIX="\n$color_whoami$ORANGE\$(hostname) $GOLD\w$RESET\$(cwdtags)"
-    PROMPT_SUFFIX="$RESET\n% "
 
-    PS1="$PROMPT_PREFIX$PROMPT_SUFFIX"
+    if [ -e "$SSH_TTY" ]; then
+        PS1="\$(update_tty_title)\n[\u@\h] \w\n% "
+    else
+        if [[ "$whoami" == "root" ]]; then
+            dir_color="$RED$BOLD"
+            perc="$RED$BOLD#"
+        else
+            dir_color="$GOLD"
+            perc="%"
+        fi
+        
+        # PS1="\n$RESET$color_whoami$YELLOW\h $RESET[$dir_color\$(~/public/libexec/cwdabbr --abbreviate)$RESET]\$(cwdtags)\n$perc_color% $RESET"
+
+        PS1="$RESET[$color_whoami$YELLOW\h$RESET $dir_color\$(~/public/libexec/cwdabbr --abbreviate)$RESET]$perc $RESET"
+    fi
 fi
+
