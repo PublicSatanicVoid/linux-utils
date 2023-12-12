@@ -7,9 +7,7 @@
 # Also this uses the minimal padding between columns needed (plus one extra space for readability,
 # between %cpu and etime, since they are adjacent numerical columns)
 
-PSALL=$(ps f -o pid,user,state,%cpu,etime,args -N --ppid 2)
-
-awk '
+ps f -o pid,user,state,%cpu,etime,args -N --ppid 2 | awk '
 NR==1 { 
     maxlen_pid = length($1)
     maxlen_user = length($2)
@@ -70,5 +68,4 @@ END {
         printf fmt, pids[i], users[i], states[i], pcpus[i], etimes[i], argvs[i]
     }
 }
-' <<< "$PSALL" | awk "BEGIN { cols=$(tput cols) }     { print substr(\$0, 1, cols) }"
-
+' | awk "BEGIN { cols=$(tput cols) }     { print substr(\$0, 1, cols) }"
