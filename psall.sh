@@ -6,7 +6,9 @@
 # script converts to that format. (There's no way to specify this in ps itself)
 # Also this uses the minimal padding between columns needed
 
-ps f -o pid,user,pcpu,state,etime,args -N --ppid 2 | awk '
+PS_OUTPUT=$(ps f -o pid,user,pcpu,state,etime,args -N --ppid 2)
+
+awk '
 
 # Spool up output rows so they can be printed with proper width at the end
 {
@@ -54,6 +56,7 @@ NR>1 {
         split(hms, h_m_s, ":")
 
         if (length(h_m_s) == 3) {
+
             hours = h_m_s[1] + 0
             minutes = h_m_s[2] + 0
             seconds = h_m_s[3] + 0
@@ -61,9 +64,9 @@ NR>1 {
             tot_hours = hours + (24 * days)
 
             etime = tot_hours ":" minutes ":" seconds
+            etimes[NR] = etime
         }
     }
-
 
     # Update column widths
     if (length($1) > maxlen_pid) { maxlen_pid = length($1) }
@@ -75,10 +78,10 @@ NR>1 {
 
 END {
     # Print all rows with correct widths
-    fmt = "%"maxlen_pid"s %"maxlen_user"s %"maxlen_pcpu"s %-"maxlen_state"s %"maxlen_etime"s %s\n"
+    fmt = "%"maxlen_pid"s %-"maxlen_user"s %"maxlen_pcpu"s %-"maxlen_state"s %"maxlen_etime"s %s\n"
 
     for (i = 1; i <= NR; i++) {
         printf fmt, pids[i], users[i], pcpus[i], states[i], etimes[i], argvs[i]
     }
 }
-' | awk "BEGIN { cols=$(tput cols) }     { print substr(\$0, 1, cols) }"
+' <<< "$PS_OUTPUT" | awk "BEGIN { cols=$(tput cols) }   { print substr(\$0, 1, cols) }"
