@@ -6,18 +6,24 @@
 # script converts to that format. (There's no way to specify this in ps itself)
 # Also this uses the minimal padding between columns needed
 
-PS_OUTPUT=$(ps f -o pid,user,pcpu,state,etime,args -N --ppid 2)
+# Converts spaces in columns to Record Separator character (0x1E)
+# This way we can preserve leading spaces in the final column, the argv, so the process tree
+# displays correctly.
+SED_COLS_TO_RS_STRING='s/(\S+)[ ]+(\S+)[ ]+(\S+)[ ]+(\S+)[ ]+(\S+) (.*)/\1\x1e\2\x1e\3\x1e\4\x1e\5\x1e\6/g'
 
-awk '
+PS_OUTPUT=$(ps f -o pid,user,pcpu,state,etime,args -N --ppid 2)
+PS_OUTPUT=$(sed -r "$SED_COLS_TO_RS_STRING" <<< "$PS_OUTPUT")
+
+awk -F"$(echo -e '\x1e')" '
 
 # Spool up output rows so they can be printed with proper width at the end
 {
     # The whole command string is treated as one column even though it
     # could contain spaces
     argv = $6
-    for (i = 7; i <= NF; i++) {
-        argv = argv " " $i
-    }
+    #for (i = 7; i <= NF; i++) {
+    #    argv = argv " " $i
+    #}
 
     pids[NR] = $1
     users[NR] = $2
