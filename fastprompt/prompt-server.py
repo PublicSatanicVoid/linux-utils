@@ -5,7 +5,7 @@ import sys
 import time
 import signal
 import socket
-import datetime
+from datetime import datetime
 
 
 parent_pid = os.getppid()
@@ -15,11 +15,12 @@ whoami = os.getlogin()
 
 def write_prompt_to_fifo():
     parent_cwd = os.readlink(f"/proc/{parent_pid}/cwd")
+    parent_cwd_base = os.path.basename(parent_cwd)
 
-    datetimestr = datetime.datetime.now().strftime("%H:%M")
+    timestamp = datetime.now().strftime("%H:%M")
 
     with open(sys.argv[1], "w") as fifo:
-        fifo.write(f"{datetimestr} [{whoami}@{hostname} {parent_cwd}] > ")
+        fifo.write(f"{timestamp} [{whoami}@{hostname} {parent_cwd_base}]$ ")
 
 signal.signal(signal.SIGUSR1, lambda *_: write_prompt_to_fifo())
 os.kill(parent_pid, signal.SIGUSR1)
